@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# Help24 - Debian Bootstrap
+# Repository: https://github.com/help24-biz/debstrap
+#
+# Naming convention: object_[context_]action
+#
+# Supported:
+#   Debian 12 (Bookworm)
+#   Debian 13 (Trixie)
+#   Proxmox VE 8
+#   Proxmox VE 9
+#
+# Purpose:
+#   Prepare an existing Debian/Proxmox installation with
+#   standard administration and diagnostic tools.
+#
+# Does NOT:
+#   - Modify APT repositories
+#   - Install kernel headers or DKMS
+#   - Modify users, SSH, root or Proxmox RBAC
+#   - Perform automatic package removal or system upgrades
+
+set -Eeuo pipefail
+
+# ---------------------------------------------------------------------------
+# Initialization
+# ---------------------------------------------------------------------------
+
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly LIB_COMMON="${SCRIPT_DIR}/lib/common.sh"
+
+if [[ ! -r "$LIB_COMMON" ]]; then
+    printf 'ERROR: Missing library: %s\n' "$LIB_COMMON" >&2
+    exit 1
+fi
+
+# shellcheck source=lib/common.sh
+source "$LIB_COMMON"
+
+HELP24_SCRIPT_NAME="debian_bootstrap"
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+bootstrap_error() {
+    local exit_code=$?
+    local line_number="${1:-unknown}"
+
+    log_error "Bootstrap failed at line ${line_number} (exit code ${exit_code})."
+    exit "$exit_code"
+}
+
+trap 'bootstrap_error "$LINENO"' ERR
+
+# ---------------------------------------------------------------------------
+# Package definitions
+# ---------------------------------------------------------------------------
+
+# Network and repository utilities
+PACKAGES_NETWORK=(
+    curl
+    wget
+    ca-certificates
+    gnupg
+    lsb-release
+    dnsutils
+    net-tools
+    tcpdump
+    iftop
+)
+
+# Administration and diagnostics
+PACKAGES_ADMIN=(
+    sudo
+    tmux
+    git
+    vim
+    htop
+    iotop
+    rsync
+    bash-completion
+    less
+    tree
+)
+
+# Archives and hardware diagnostics
+PACKAGES_MISC=(
+    unzip
+    zip
+    pciutils
+    usbutils
+    lm-sensors
+    smartmontools
+)
+
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+
+bootstrap_preflight() {
+    log_info "Running bootstrap preflight checks."
+
+    root_check || return 1
+    system_detect || return 1
+
+    command_check apt-get ||
+        log_fatal "apt-get is required."
+
+    command_check dpkg-query ||
+        log_fatal "dpkg-query is required."
+
+    if [[ "$HELP24_OS_VERSION" == "12" ]]; then
+        log_warn "Debian 12 Bookworm detected (legacy compatibility)."
+    fi
+
+    if [[ "$HELP24_PLATFORM" == "proxmox" ]]; then
+        log_info "Proxmox VE detected: applying package-only bootstrap."
+        log_info "Kernel packages and APT repositories will remain unchanged."
+    fi
+
+    log_info "Preflight checks completed."
+}
+
+# ---------------------------------------------------------------------------
+# Package management
+# ---------------------------------------------------------------------------
+
+package_check() {
+    local package_name="$1"
+
+    dpkg-query -W \
+        -f='${db:Status-Abbrev}' \
+        "$package_name" 2>/dev/null |
+        grep -q '^ii'
+}
+
+package_install() {
+    local missing_packages=()
+    local package_name
+
+    for package_name in "$@"; do
+        if package_check "$package_name"; then
+            log_debug "Already installed: $package_name"
+        else
+            missing_packages+=("$package_name")
+        fi
+    done
+
+    if (( ${#missing_packages[@]} == 0 )); then
+        log_info "All requested packages are already installed."
+        return 0
+    fi
+
+    log_info "Installing packages: ${missing_packages[*]}"
+
+    DEBIAN_FRONTEND=noninteractive \
+        apt-get install -y --no-install-recommends \
+        "${missing_packages[@]}"
+
+    for package_name in "${missing_packages[@]}"; do
+        if ! package_check "$package_name"; then
+            log_error "Package installation verification failed: $package_name"
+            return 1
+        fi
+    done
+
+    log_info "Package installation completed."
+}
+
+# ---------------------------------------------------------------------------
+# Bootstrap
+# ---------------------------------------------------------------------------
+
+debian_bootstrap() {
+    log_info "Starting Help24 Debian bootstrap."
+
+    bootstrap_preflight || return 1
+
+    log_info "Updating APT package index."
+    apt-get update
+
+    log_info "Installing network utilities."
+    package_install "${PACKAGES_NETWORK[@]}"
+
+    log_info "Installing administration tools."
+    package_install "${PACKAGES_ADMIN[@]}"
+
+    log_info "Installing archive and hardware utilities."
+    package_install "${PACKAGES_MISC[@]}"
+
+    log_info "Verifying essential commands."
+
+    local essential_commands=(
+        curl
+        git
+        sudo
+        tmux
+        vim
+        rsync
+    )
+
+    local command_name
+
+    for command_name in "${essential_commands[@]}"; do
+        if ! command_check "$command_name"; then
+            log_error "Essential command missing: $command_name"
+            return 1
+        fi
+    done
+
+    log_info "Help24 Debian bootstrap completed successfully."
+    log_info "Platform: ${HELP24_PLATFORM}"
+    log_info "Debian version: ${HELP24_OS_VERSION}"
+
+    if [[ "$HELP24_PLATFORM" == "proxmox" ]]; then
+        log_info "Proxmox VE version: ${HELP24_PVE_VERSION}"
+    fi
+
+    log_info "No users, SSH settings, APT repositories or kernel packages were modified."
+}
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+debian_bootstrap "$@"

@@ -169,6 +169,100 @@ package_install() {
 }
 
 # ---------------------------------------------------------------------------
+# Help24 directory structure
+# ---------------------------------------------------------------------------
+
+help24_directory_create() {
+    # Create the standard Help24 installation directories.
+    # Existing directories are preserved.
+
+    install -d -m 0755 \
+        /opt/help24/bin/lib \
+        /opt/help24/etc \
+        /opt/help24/log \
+        /opt/help24/templates
+
+    log_info "Help24 directory structure ready."
+}
+
+# ---------------------------------------------------------------------------
+# Help24 script installation
+# ---------------------------------------------------------------------------
+
+help24_script_install() {
+    # Install executable scripts and shared libraries.
+    # Missing optional directories are ignored.
+    # Existing files are updated without removing other files.
+
+    local script
+
+    # Install main scripts.
+    for script in \
+        "${SCRIPT_DIR}/debian_bootstrap" \
+        "${SCRIPT_DIR}/repo_manage"; do
+
+        [[ -f "$script" ]] || continue
+
+        if [[ "$script" == "/opt/help24/bin/${script##*/}" ]]; then
+            log_debug "Already installed: $script"
+            continue
+        fi
+
+        install -m 0755 "$script" /opt/help24/bin/
+    done
+
+    # Install shared libraries.
+    if [[ -d "${SCRIPT_DIR}/lib" ]]; then
+        for script in "${SCRIPT_DIR}"/lib/*.sh; do
+            [[ -f "$script" ]] || continue
+
+            install -m 0644 "$script" /opt/help24/bin/lib/
+        done
+    fi
+
+    log_info "Help24 scripts and libraries installed."
+}
+
+# ---------------------------------------------------------------------------
+# Help24 command symlinks
+# ---------------------------------------------------------------------------
+
+help24_symlink_create() {
+    # Make selected Help24 commands available system-wide.
+    # Existing unrelated files or symlinks are never overwritten.
+
+    local command_name="repo_manage"
+    local target="/opt/help24/bin/${command_name}"
+    local link="/usr/local/bin/${command_name}"
+
+    if [[ ! -f "$target" ]]; then
+        log_warn "Cannot create symlink: $target does not exist."
+        return 0
+    fi
+
+    install -d -m 0755 /usr/local/bin
+
+    if [[ -L "$link" ]]; then
+        if [[ "$(readlink "$link")" == "$target" ]]; then
+            log_debug "Symlink already configured: $link"
+            return 0
+        fi
+
+        log_error "Symlink already exists with a different target: $link"
+        return 1
+    fi
+
+    if [[ -e "$link" ]]; then
+        log_error "Command already exists: $link"
+        return 1
+    fi
+
+    ln -s "$target" "$link"
+
+    log_info "Command available: $command_name"
+}
+
+# ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
 
@@ -176,6 +270,9 @@ debian_bootstrap() {
     log_info "Starting Help24 Debian bootstrap."
 
     bootstrap_preflight || return 1
+
+    help24_directory_create
+    help24_script_install
 
     log_info "Updating APT package index."
     apt-get update

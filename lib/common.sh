@@ -179,3 +179,33 @@ system_detect() {
 
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Platform guards
+# ---------------------------------------------------------------------------
+
+platform_debian_check() {
+    # Always detect the platform independently.
+    # Never trust previously populated environment variables.
+    if ! system_detect; then
+        log_error "Platform detection failed."
+        return 1
+    fi
+
+    if [[ "$HELP24_PLATFORM" != "debian" ]]; then
+        log_error "Operation refused: Debian vanilla is required."
+        log_error "Detected platform: ${HELP24_PLATFORM}"
+        return 1
+    fi
+
+    case "$HELP24_OS_VERSION" in
+        12|13)
+            log_debug "Debian ${HELP24_OS_VERSION} verified."
+            return 0
+            ;;
+        *)
+            log_error "Unsupported Debian version: ${HELP24_OS_VERSION}"
+            return 1
+            ;;
+    esac
+}

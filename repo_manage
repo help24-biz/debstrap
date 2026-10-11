@@ -1,0 +1,130 @@
+
+repo_postgresql_enable() {
+  local file="$REPO_DIR/help24-pgdg.sources" arch
+  repo_conflict_check 'apt\.postgresql\.org' "$file" || return 1
+  arch=$(dpkg --print-architecture)
+  case "$arch" in
+    amd64|arm64|ppc64el) ;;
+    *) log_error "Unsupported PGDG architecture: $arch"; return 1 ;;
+  esac
+  repo_postgresql_key_refresh || return 1
+  repo_file_write "$file" <<EOF2
+Types: deb
+URIs: https://apt.postgresql.org/pub/repos/apt
+Suites: ${HELP24_OS_CODENAME}-pgdg
+Components: main
+Architectures: $arch
+Signed-By: $KEY_DIR/help24-pgdg.asc
+EOF2
+}
+# MariaDB uses a changing vendor installer. Do not run an unverified remote
+# script. Supply the vendor-published SHA-256 for the exact downloaded version.
+repo_mariadb_enable() {
+  local version=${1:-} checksum=${2:-} tmp
+  [[ "$version" =~ ^[0-9]+\.[0-9]+$ ]] || {
+    log_error 'Specify MariaDB version (e.g. 11.4)'; return 2;
+  }
+  [[ "$checksum" =~ ^[[:xdigit:]]{64}$ ]] || {
+    log_error 'Supply the official 64-character SHA-256 of mariadb_repo_setup'; return 2;
+  }
+  repo_conflict_check '(mariadb\.com|mariadb\.org|dlm\.mariadb\.com)' \
+    '/nonexistent/help24-mariadb.sources' || return 1
+  tmp=$(mktemp) || return 1
+  if ! repo_download 'https://r.mariadb.com/downloads/mariadb_repo_setup' "$tmp"; then
+    rm -f "$tmp"; return 1
+  fi
+  if ! printf '%s  %s\n' "$checksum" "$tmp" | sha256sum -c --status; then
+    rm -f "$tmp"; log_error 'MariaDB installer SHA-256 mismatch'; return 1
+  fi
+  log_info "Verified MariaDB installer; configuring version $version"
+  if ! bash "$tmp" --mariadb-server-version="mariadb-$version" \
+      --skip-maxscale --skip-tools; then
+    rm -f "$tmp"; return 1
+  fi
+  rm -f "$tmp"
+  log_info 'MariaDB vendor installer completed; review APT changes before update'
+}
+repo_check() {
+  local name=$1 file=''
+  case "$name" in
+    sury) file="$REPO_DIR/help24-sury.sources" ;;
+    nginx) file="$REPO_DIR/help24-nginx.sources" ;;
+    postgresql) file="$REPO_DIR/help24-pgdg.sources" ;;
+    mariadb)
+      log_info 'MariaDB APT source files:'
+      local files=()
+      shopt -s nullglob
+      files+=("$REPO_DIR"/*.list "$REPO_DIR"/*.sources)
+      shopt -u nullglob
+      if (( ${#files[@]} )); then
+        grep -lEi '(mariadb\.com|mariadb\.org|dlm\.mariadb\.com)' "${files[@]}" || true
+      fi
+      return 0 ;;
+    *) log_error "Unknown repo: $name"; return 2 ;;
+  esac
+  if [[ -f "$file" ]]; then
+    log_info "$name configured: $file"
+    cat "$file"
+  else
+    log_warn "$name not configured by Help24"
+  fi
+}
+repo_update() { log_info 'Updating APT package indexes'; apt-get update; }
+repo_manage() {
+  local name=${1:-} action=${2:-} arg=${3:-} extra=${4:-} item
+  case "$name:$action" in
+    sury:enable) repo_sury_enable ;;
+    sury:key-refresh) repo_sury_key_refresh ;;
+    nginx:enable) repo_nginx_enable "${arg:-stable}" ;;
+    nginx:key-refresh) repo_nginx_key_refresh ;;
+    postgresql:enable) repo_postgresql_enable ;;
+    postgresql:key-refresh) repo_postgresql_key_refresh ;;
+    mariadb:enable) repo_mariadb_enable "$arg" "$extra" ;;
+    mariadb:key-refresh)
+      log_error 'MariaDB keys are vendor-managed; rerun verified setup'; return 2 ;;
+    all:check)
+      for item in sury nginx mariadb postgresql; do repo_check "$item"; done ;;
+    all:update) repo_update ;;
+    sury:check|nginx:check|mariadb:check|postgresql:check) repo_check "$name" ;;
+    *) log_error "Unsupported operation: $name $action"; return 2 ;;
+  esac
+}
+repo_menu() {
+  local choice version checksum
+  while true; do
+    cat <<'MENU'
+Help24 - Debian Repo Management
+ 1) Enable Sury PHP
+ 2) Enable Nginx stable
+ 3) Enable Nginx mainline
+ 4) Enable MariaDB (version + official SHA-256)
+ 5) Enable PostgreSQL PGDG
+ 6) Check repos
+ 7) Refresh Sury keyring
+ 8) Refresh Nginx key
+ 9) Refresh PostgreSQL key
+10) Update APT indexes
+ 0) Exit
+MENU
+    read -r -p 'Selection: ' choice || return 0
+    case "$choice" in
+      1) repo_manage sury enable ;;
+      2) repo_manage nginx enable stable ;;
+      3) repo_manage nginx enable mainline ;;
+      4)
+        read -r -p 'MariaDB version (e.g. 11.4): ' version || return 0
+        read -r -p 'Official setup SHA-256: ' checksum || return 0
+        repo_manage mariadb enable "$version" "$checksum" ;;
+      5) repo_manage postgresql enable ;;
+      6) repo_manage all check ;;
+      7) repo_manage sury key-refresh ;;
+      8) repo_manage nginx key-refresh ;;
+      9) repo_manage postgresql key-refresh ;;
+      10) repo_manage all update ;;
+      0) return 0 ;;
+      *) log_warn 'Invalid selection' ;;
+    esac
+  done
+}
+repo_preflight || exit 1
+if (( $# == 0 )); then repo_menu; else repo_manage "$@"; fi

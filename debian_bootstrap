@@ -64,7 +64,7 @@ PACKAGES_NETWORK=(
     ca-certificates
     gnupg
     lsb-release
-    dnsutils
+    bind9-dnsutils
     net-tools
     tcpdump
     iftop

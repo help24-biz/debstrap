@@ -136,36 +136,46 @@ package_check() {
 }
 
 package_install() {
-    local missing_packages=()
     local package_name
+    local failed_packages=()
 
     for package_name in "$@"; do
+
+        # Skip packages already installed.
         if package_check "$package_name"; then
             log_debug "Already installed: $package_name"
-        else
-            missing_packages+=("$package_name")
+            continue
         fi
-    done
 
-    if (( ${#missing_packages[@]} == 0 )); then
-        log_info "All requested packages are already installed."
-        return 0
-    fi
+        log_info "Installing package: $package_name"
 
-    log_info "Installing packages: ${missing_packages[*]}"
+        # Continue even if a package cannot be installed.
+        if ! DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y --no-install-recommends "$package_name"; then
 
-    DEBIAN_FRONTEND=noninteractive \
-        apt-get install -y --no-install-recommends \
-        "${missing_packages[@]}"
+            log_error "Package installation failed: $package_name"
+            failed_packages+=("$package_name")
+            continue
+        fi
 
-    for package_name in "${missing_packages[@]}"; do
+        # Verify installation.
         if ! package_check "$package_name"; then
             log_error "Package installation verification failed: $package_name"
-            return 1
+            failed_packages+=("$package_name")
+            continue
         fi
+
+        log_debug "Package installed: $package_name"
     done
 
-    log_info "Package installation completed."
+    # Report failures without interrupting the bootstrap.
+    if (( ${#failed_packages[@]} > 0 )); then
+        log_warn "Packages requiring attention: ${failed_packages[*]}"
+    else
+        log_info "Package installation completed successfully."
+    fi
+
+    return 0
 }
 
 # ---------------------------------------------------------------------------

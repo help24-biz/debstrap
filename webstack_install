@@ -20,10 +20,13 @@ Usage: webstack_install install [options]
   --web nginx|apache|none               Default: nginx
   --php X.Y                            Default: Debian's PHP version
   --database mariadb|postgresql|none    Default: none
+  --db-client auto|mariadb|postgresql|both|none  Default: auto
   --cache redis|none                   Default: redis
   --extras                            LDAP, IMAP, SOAP, BCMath, Imagick, GMP
 
 PHP-FPM, CLI, common extensions, OPcache and APCu are always installed.
+Auto clients: selected local database, or both clients when no local server.
+Client selection does not change PHP database drivers.
 Uses configured APT repositories; does not enable third-party repositories.
 Does not create sites, TLS certificates, databases or install Nextcloud.
 Redis and database services use the distribution's existing configuration.
@@ -35,11 +38,12 @@ webstack_parse() {
     WEB=nginx
     PHP_VERSION=''
     DATABASE=none
+    DB_CLIENT=auto
     CACHE=redis
     EXTRAS=0
     while (( $# )); do
         case "$1" in
-            --profile|--web|--php|--database|--cache)
+            --profile|--web|--php|--database|--db-client|--cache)
                 if (( $# < 2 )) || [[ "$2" == --* ]]; then
                     log_error "Missing value for $1"; return 2
                 fi
@@ -48,6 +52,7 @@ webstack_parse() {
                     --web) WEB=$2 ;;
                     --php) PHP_VERSION=$2 ;;
                     --database) DATABASE=$2 ;;
+                    --db-client) DB_CLIENT=$2 ;;
                     --cache) CACHE=$2 ;;
                 esac
                 shift 2 ;;
@@ -58,6 +63,7 @@ webstack_parse() {
     case "$PROFILE" in general|nextcloud) ;; *) log_error 'Invalid profile'; return 2 ;; esac
     case "$WEB" in nginx|apache|none) ;; *) log_error 'Invalid web server'; return 2 ;; esac
     case "$DATABASE" in mariadb|postgresql|none) ;; *) log_error 'Invalid database'; return 2 ;; esac
+    case "$DB_CLIENT" in auto|mariadb|postgresql|both|none) ;; *) log_error 'Invalid database client'; return 2 ;; esac
     case "$CACHE" in redis|none) ;; *) log_error 'Invalid cache'; return 2 ;; esac
     if [[ -n "$PHP_VERSION" && ! "$PHP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
         log_error 'PHP version must use X.Y format'; return 2
@@ -80,7 +86,7 @@ webstack_preflight() {
 }
 
 webstack_packages() {
-    local module
+    local module client=$DB_CLIENT
     PACKAGES=(ca-certificates unzip curl)
     PHP_MODULES=(fpm cli common curl gd intl mbstring xml zip opcache apcu)
     if [[ "$PROFILE" == nextcloud || "$EXTRAS" == 1 ]]; then
@@ -91,6 +97,16 @@ webstack_packages() {
         mariadb) PACKAGES+=(mariadb-server); PHP_MODULES+=(mysql) ;;
         postgresql) PACKAGES+=(postgresql); PHP_MODULES+=(pgsql) ;;
         none) PHP_MODULES+=(mysql pgsql sqlite3) ;;
+    esac
+    # Remote databases need command-line clients too (backup/restore/admin).
+    if [[ "$client" == auto ]]; then
+        client=$DATABASE
+        [[ "$client" != none ]] || client=both
+    fi
+    case "$client" in
+        mariadb) PACKAGES+=(mariadb-client) ;;
+        postgresql) PACKAGES+=(postgresql-client) ;;
+        both) PACKAGES+=(mariadb-client postgresql-client) ;;
     esac
     if [[ "$CACHE" == redis ]]; then
         PACKAGES+=(redis-server)
@@ -167,7 +183,7 @@ webstack_install() {
         esac
     fi
     webstack_packages
-    log_info "Installing $PROFILE: web=$WEB PHP=$PHP_VERSION database=$DATABASE cache=$CACHE"
+    log_info "Installing $PROFILE: web=$WEB PHP=$PHP_VERSION database=$DATABASE client=$DB_CLIENT cache=$CACHE"
     # Resolve everything before installing; unavailable extensions fail here.
     apt-get --simulate install --no-install-recommends "${PACKAGES[@]}" || return 1
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${PACKAGES[@]}" || return 1
@@ -185,7 +201,7 @@ webstack_install() {
 }
 
 webstack_menu() {
-    local profile web php database cache extras
+    local profile web php database client cache extras
     while true; do
         printf '\nHelp24 Webstack\n 1) General PHP / hosting\n 2) Nextcloud prerequisites\n 0) Exit\n'
         read -r -p 'Selection: ' profile || return 0
@@ -198,9 +214,10 @@ webstack_menu() {
         read -r -p 'Web server [nginx/apache/none] (nginx): ' web || return 0
         read -r -p 'PHP version [X.Y, empty = Debian default]: ' php || return 0
         read -r -p 'Local database [mariadb/postgresql/none] (none): ' database || return 0
+        read -r -p 'Database CLI client [auto/mariadb/postgresql/both/none] (auto): ' client || return 0
         read -r -p 'Cache server [redis/none] (redis): ' cache || return 0
         read -r -p 'Extra PHP extensions [y/N]: ' extras || return 0
-        local args=(--profile "$profile" --web "${web:-nginx}" --database "${database:-none}" --cache "${cache:-redis}")
+        local args=(--profile "$profile" --web "${web:-nginx}" --database "${database:-none}" --db-client "${client:-auto}" --cache "${cache:-redis}")
         [[ -z "$php" ]] || args+=(--php "$php")
         case "$extras" in y|Y) args+=(--extras) ;; esac
         if ! webstack_install "${args[@]}"; then log_error 'Webstack installation failed'; fi

@@ -147,6 +147,16 @@ Defaults: general profile, Nginx, Debian's default PHP version, no local databas
 and Redis. All installations include PHP CLI/FPM, OPcache, APCu, curl, GD, intl,
 mbstring, XML and ZIP. Database drivers follow the selected database; with
 `--database none`, MySQL, PostgreSQL and SQLite drivers support external databases.
+Database CLI clients are explicit: `--db-client auto` (default) installs the
+client matching the local server, or both `mariadb-client` and `postgresql-client`
+when `--database none` is used. Override with `mariadb`, `postgresql`, `both` or
+`none`; this does not change PHP drivers or install a database server.
+For example, a remote PostgreSQL database:
+
+```bash
+sudo bash webstack_install install --profile nextcloud --php 8.4 --database none --db-client postgresql
+```
+
 `--extras` adds BCMath, GMP, Imagick, LDAP, IMAP and SOAP. The Nextcloud profile
 includes BCMath, GMP and Imagick and uses 512 MB PHP memory/upload limits.
 

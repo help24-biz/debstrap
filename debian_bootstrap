@@ -213,7 +213,8 @@ help24_script_install() {
     # Install main scripts.
     for script in \
         "${SCRIPT_DIR}/debian_bootstrap" \
-        "${SCRIPT_DIR}/repo_manage"; do
+        "${SCRIPT_DIR}/repo_manage" \
+        "${SCRIPT_DIR}/webstack_install"; do
 
         [[ -f "$script" ]] || continue
 

@@ -1,3 +1,118 @@
+#!/usr/bin/env bash
+# Manage upstream repositories on vanilla Debian 12/13.
+set -uo pipefail
+
+# Resolve the installed /usr/local/bin symlink before loading the library.
+SCRIPT_PATH=$(readlink -f -- "${BASH_SOURCE[0]}") || exit 1
+SCRIPT_DIR=${SCRIPT_PATH%/*}
+if [[ ! -r "$SCRIPT_DIR/lib/common.sh" ]]; then
+  printf 'ERROR: Missing library: %s/lib/common.sh\n' "$SCRIPT_DIR" >&2
+  exit 1
+fi
+source "$SCRIPT_DIR/lib/common.sh"
+
+REPO_DIR=/etc/apt/sources.list.d
+KEY_DIR=/etc/apt/keyrings
+
+repo_preflight() {
+  root_check || return 1
+  platform_debian_check || return 1
+  local cmd
+  for cmd in apt-get dpkg curl sha256sum; do
+    command_check "$cmd" || {
+      log_error "Required command missing: $cmd (run debian_bootstrap first)"
+      return 1
+    }
+  done
+  install -d -m 0755 "$REPO_DIR" "$KEY_DIR"
+}
+
+repo_download() {
+  curl --fail --silent --show-error --location --proto '=https' "$1" -o "$2"
+}
+
+# Install only complete files; failed downloads leave existing files intact.
+repo_file_write() {
+  local file=$1 tmp
+  tmp=$(mktemp) || return 1
+  if ! cat > "$tmp" || ! install -m 0644 "$tmp" "$file"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+}
+
+repo_conflict_check() {
+  local pattern=$1 own_file=$2 file
+  for file in /etc/apt/sources.list "$REPO_DIR"/*.list "$REPO_DIR"/*.sources; do
+    [[ -f "$file" && "$file" != "$own_file" ]] || continue
+    if grep -Ei '^[[:space:]]*[^#[:space:]]' "$file" | grep -Eq "$pattern"; then
+      log_error "Repository already present in $file; review it before enabling"
+      return 1
+    fi
+  done
+}
+
+repo_key_refresh() {
+  local url=$1 file=$2 tmp
+  tmp=$(mktemp) || return 1
+  if ! repo_download "$url" "$tmp" || [[ ! -s "$tmp" ]] ||
+      ! install -m 0644 "$tmp" "$file"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+}
+
+repo_sury_key_refresh() {
+  local tmp
+  tmp=$(mktemp) || return 1
+  if ! repo_download 'https://packages.sury.org/debsuryorg-archive-keyring.deb' "$tmp" ||
+      ! dpkg -i "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
+}
+
+repo_sury_enable() {
+  local file="$REPO_DIR/help24-sury.sources"
+  repo_conflict_check 'packages\.sury\.org/php' "$file" || return 1
+  repo_sury_key_refresh || return 1
+  repo_file_write "$file" <<EOF
+Types: deb
+URIs: https://packages.sury.org/php/
+Suites: $HELP24_OS_CODENAME
+Components: main
+Signed-By: /usr/share/keyrings/debsuryorg-archive-keyring.gpg
+EOF
+}
+
+repo_nginx_key_refresh() {
+  repo_key_refresh 'https://nginx.org/keys/nginx_signing.key' "$KEY_DIR/help24-nginx.asc"
+}
+
+repo_nginx_enable() {
+  local channel=${1:-stable} uri file="$REPO_DIR/help24-nginx.sources"
+  case "$channel" in
+    stable) uri=https://nginx.org/packages/debian ;;
+    mainline) uri=https://nginx.org/packages/mainline/debian ;;
+    *) log_error "Unknown Nginx channel: $channel"; return 2 ;;
+  esac
+  repo_conflict_check 'nginx\.org/packages' "$file" || return 1
+  repo_nginx_key_refresh || return 1
+  repo_file_write "$file" <<EOF
+Types: deb
+URIs: $uri
+Suites: $HELP24_OS_CODENAME
+Components: nginx
+Signed-By: $KEY_DIR/help24-nginx.asc
+EOF
+}
+
+repo_postgresql_key_refresh() {
+  repo_key_refresh 'https://www.postgresql.org/media/keys/ACCC4CF8.asc' "$KEY_DIR/help24-pgdg.asc"
+}
 
 repo_postgresql_enable() {
   local file="$REPO_DIR/help24-pgdg.sources" arch
@@ -83,7 +198,7 @@ repo_manage() {
     mariadb:key-refresh)
       log_error 'MariaDB keys are vendor-managed; rerun verified setup'; return 2 ;;
     all:check)
-      for item in sury nginx mariadb postgresql; do repo_check "$item"; done ;;
+      for item in sury nginx mariadb postgresql; do repo_check "$item" || return; done ;;
     all:update) repo_update ;;
     sury:check|nginx:check|mariadb:check|postgresql:check) repo_check "$name" ;;
     *) log_error "Unsupported operation: $name $action"; return 2 ;;
@@ -126,5 +241,7 @@ MENU
     esac
   done
 }
-repo_preflight || exit 1
-if (( $# == 0 )); then repo_menu; else repo_manage "$@"; fi
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  repo_preflight || exit 1
+  if (( $# == 0 )); then repo_menu; else repo_manage "$@"; fi
+fi

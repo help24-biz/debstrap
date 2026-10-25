@@ -7,8 +7,8 @@
 # Supported platforms:
 #   Debian 12 (Bookworm)
 #   Debian 13 (Trixie)
-#   Proxmox VE 8
 #   Proxmox VE 9
+#   Proxmox VE 8 (legacy, end of support)
 #
 # This library must be sourced, not executed.
 # Sourcing it does not modify the system.

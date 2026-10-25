@@ -7,8 +7,8 @@
 # Supported:
 #   Debian 12 (Bookworm)
 #   Debian 13 (Trixie)
-#   Proxmox VE 8
 #   Proxmox VE 9
+#   Proxmox VE 8 (legacy, end of support)
 #
 # Purpose:
 #   Prepare an existing Debian/Proxmox installation with
@@ -112,6 +112,10 @@ bootstrap_preflight() {
 
     if [[ "$HELP24_OS_VERSION" == "12" ]]; then
         log_warn "Debian 12 Bookworm detected (legacy compatibility)."
+    fi
+
+    if [[ "$HELP24_PVE_VERSION" == "8" ]]; then
+        log_warn "Proxmox VE 8 detected (legacy, end of support). Upgrade to Proxmox VE 9."
     fi
 
     if [[ "$HELP24_PLATFORM" == "proxmox" ]]; then

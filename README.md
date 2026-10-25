@@ -23,7 +23,7 @@ The bootstrap installs essential administration tools, creates the Help24 direct
 | Debian | 13 (Trixie) | Primary |
 | Debian | 12 (Bookworm) | Legacy |
 | Proxmox VE | 9 | Bootstrap and administration |
-| Proxmox VE | 8 | Bootstrap and administration |
+| Proxmox VE | 8 | Legacy (end of support, bootstrap only with warning) |
 
 > **Important:** Repository management is supported exclusively on vanilla Debian and is intentionally disabled on Proxmox VE.
 
@@ -130,6 +130,8 @@ Enabling a repository does not automatically install or upgrade its associated s
 > **Proxmox VE:** Repository management is explicitly blocked to protect Proxmox package dependencies and repository configuration.
 
 ## Administration Scripts
+
+> **Planned:** the `scripts/` directory and `user_admin_create` are not yet part of this repository.
 
 Additional administration scripts are maintained in the `scripts/` directory.
 
